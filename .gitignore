@@ -1,0 +1,12 @@
+# Dependências
+/node_modules
+package-lock.json
+
+# Arquivo de sessão do WhatsApp
+/session
+
+# Variáveis de ambiente
+.env
+
+# Logs
+npm-debug.log

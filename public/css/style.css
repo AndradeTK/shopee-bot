@@ -1,0 +1,23 @@
+body {
+    font-family: 'Montserrat', sans-serif;
+}
+
+/* Paleta de Cores: Azul, Preto, Branco */
+:root {
+    --bs-primary: #0d6efd; /* Azul Padrão do Bootstrap */
+    --bs-dark: #212529; /* Preto Padrão */
+}
+
+.navbar-dark {
+    background-color: var(--bs-dark) !important;
+}
+
+.card-header {
+    background-color: var(--bs-dark);
+    color: white;
+}
+
+.btn-primary {
+    background-color: var(--bs-primary);
+    border-color: var(--bs-primary);
+}

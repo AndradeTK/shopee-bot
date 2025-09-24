@@ -1,0 +1,41 @@
+<%- include('partials/header', { title: 'Configurações' }) %>
+
+<% if (success) { %>
+    <div class="alert alert-success" role="alert">
+        <i class="fa-solid fa-check-circle"></i> Configurações salvas com sucesso!
+    </div>
+<% } %>
+
+<div class="card">
+    <div class="card-header">
+        <i class="fa-solid fa-gears"></i> Configurações dos Grupos
+    </div>
+    <div class="card-body">
+        <form action="/admin/save" method="POST">
+            <div class="mb-3">
+                <label for="monitorGroupId" class="form-label">ID do Grupo de Origem (para monitorar)</label>
+                <input type="text" class="form-control" id="monitorGroupId" name="monitorGroupId" value="<%= settings.monitorGroupId %>" required>
+            </div>
+
+            <div id="target-groups-container">
+                <label class="form-label">IDs dos Grupos de Destino (para enviar)</label>
+                <% settings.targetGroups.forEach(function(group) { %>
+                    <div class="input-group mb-2">
+                        <span class="input-group-text"><i class="fa-brands fa-whatsapp"></i></span>
+                        <input type="text" class="form-control" name="targetGroups" value="<%= group %>">
+                        <button class="btn btn-outline-danger" type="button" onclick="removeGroup(this)"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                <% }); %>
+            </div>
+            <button type="button" class="btn btn-success mt-2" onclick="addGroup()"><i class="fa-solid fa-plus"></i> Adicionar Grupo</button>
+
+            <hr>
+
+            <button type="submit" class="btn btn-primary w-100"><i class="fa-solid fa-save"></i> Salvar Configurações</button>
+        </form>
+        <p class="text-muted mt-3 small"><strong>Importante:</strong> Após salvar, reinicie o bot (pare com Ctrl+C e rode <code>npm start</code>) para que as alterações no grupo de origem tenham efeito.</p>
+    </div>
+</div>
+
+
+<%- include('partials/footer') %>
