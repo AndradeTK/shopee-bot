@@ -18,6 +18,7 @@ const { insertMessage } = require("./databaseService");
 let sock;
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 
+// Lê as configurações do arquivo JSON
 const settingsFilePath = path.join(__dirname, "../../config/settings.json");
 const settings = JSON.parse(fs.readFileSync(settingsFilePath));
 const MONITOR_GROUP_ID = settings.monitorGroupId;
@@ -57,79 +58,76 @@ async function connectToWhatsApp() {
     }
   });
 
-  // Substitua o seu bloco 'messages.upsert' por este
-
+  // Bloco de recebimento de mensagens, agora refatorado e mais limpo
   sock.ev.on("messages.upsert", async (m) => {
     const msg = m.messages[0];
-
-    if (!msg.message) return;
+    if (!msg.message || !msg.key.remoteJid) return;
 
     const remoteJid = msg.key.remoteJid;
 
+    // Ignora conversas privadas, foca apenas em grupos
     if (!remoteJid.endsWith("@g.us")) return;
-    console.log("Mensagem recebida de:", remoteJid);
 
+    // Pega o conteúdo da mensagem (legenda ou texto) UMA ÚNICA VEZ
     const messageText =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
       msg.message.imageMessage?.caption ||
       msg.message.videoMessage?.caption;
-    const senderName = msg.pushName;
-    // Pega os metadados do grupo (para obter o nome)
-    let groupName = remoteJid; // Usa o ID como padrão
+
+    // Se não houver texto/legenda, não há nada a fazer.
+    if (!messageText) return;
+
+    console.log("Mensagem recebida de:", remoteJid);
+
+    // Salva TODAS as mensagens de grupo com texto no banco de dados para a "Caixa de Entrada"
     try {
+      const senderName = msg.pushName || "Desconhecido";
       const metadata = await sock.groupMetadata(remoteJid);
-      groupName = metadata.subject;
-    } catch (e) {
-      console.error("Não foi possível obter os metadados do grupo", e);
-    } // Salva a mensagem no banco de dados para o painel de logs/inbox
-    if (messageText) {
+      const groupName = metadata.subject;
       insertMessage({
         groupId: remoteJid,
-        groupName: groupName,
-        senderName: senderName,
-        messageText: messageText,
+        groupName,
+        senderName,
+        messageText,
       });
+    } catch (e) {
+      log("ERROR", "Falha ao salvar mensagem no banco de dados", { error: e.message });
+      console.error(
+        "Erro ao obter metadados ou salvar mensagem no banco de dados:",
+        e.message
+      );
     }
-    // Só processa mensagens do grupo monitorado
+
+    // AGORA, verifica se a mensagem é do grupo que queremos MONITORAR para enviar ao n8n
     if (remoteJid === MONITOR_GROUP_ID) {
-      const messageType = Object.keys(msg.message)[0];
-      let caption = "";
+      log("INFO", `Mensagem recebida do grupo monitorado ${remoteJid}`);
       let imageBase64 = null;
 
-      // Verifica se a mensagem é uma imagem com legenda
-      if (messageType === "imageMessage" && msg.message.imageMessage.caption) {
-        caption = msg.message.imageMessage.caption;
-
-        console.log("Detectada imagem com legenda. Baixando mídia...");
+      // Se for uma imagem, tenta baixar a mídia
+      if (msg.message.imageMessage) {
+        console.log("Detectada imagem. Baixando mídia...");
         try {
-          // Baixa a imagem e a converte para Base64
           const buffer = await downloadMediaMessage(msg, "buffer", {});
           imageBase64 = buffer.toString("base64");
           console.log("Mídia baixada com sucesso.");
         } catch (e) {
+          log("ERROR", "Falha ao baixar mídia", { error: e.message });
           console.error("Erro ao baixar mídia:", e);
         }
-      } else {
-        // Se não for imagem com legenda, pega apenas o texto (como antes)
-        caption =
-          msg.message.conversation || msg.message.extendedTextMessage?.text;
       }
 
-      // Se tivermos uma legenda para processar, envia para o n8n
-      if (caption) {
-        log("INFO", `Mensagem recebida do grupo ${caption}`);
-        console.log(`Legenda/Texto do grupo monitorado: "${caption}"`);
-        try {
-          await axios.post(N8N_WEBHOOK_URL, {
-            caption: caption, // Enviamos a legenda/texto
-            imageBase64: imageBase64, // Enviamos a imagem (ou null se não tiver)
-            from: remoteJid,
-          });
-          console.log("Dados enviados para o n8n com sucesso!");
-        } catch (error) {
-          console.error("Erro ao enviar dados para o n8n:", error.message);
-        }
+      // Envia os dados coletados para o n8n
+      try {
+        await axios.post(N8N_WEBHOOK_URL, {
+          caption: messageText, // Usa o messageText que já extraímos
+          imageBase64: imageBase64, // Será a imagem em base64 ou null
+          from: remoteJid,
+        });
+        console.log("Dados enviados para o n8n com sucesso!");
+      } catch (error) {
+        log("ERROR", "Falha ao enviar dados para o n8n", { error: error.message });
+        console.error("Erro ao enviar dados para o n8n:", error.message);
       }
     }
   });
@@ -137,6 +135,7 @@ async function connectToWhatsApp() {
   sock.ev.on("creds.update", saveCreds);
 }
 
+// Função para enviar mensagens (já estava correta)
 async function sendMessage(targetGroups, caption, imageBase64) {
   if (!sock) {
     throw new Error("WhatsApp não está conectado.");
@@ -144,12 +143,14 @@ async function sendMessage(targetGroups, caption, imageBase64) {
   try {
     for (const groupId of targetGroups) {
       if (imageBase64) {
+        // Se tiver imagem, envia imagem com legenda
         const imageBuffer = Buffer.from(imageBase64, "base64");
         await sock.sendMessage(groupId, {
           image: imageBuffer,
           caption: caption,
         });
       } else {
+        // Se não, envia só texto
         await sock.sendMessage(groupId, { text: caption });
       }
       log("INFO", `Mensagem reenviada para o grupo de destino ${groupId}`);
@@ -157,7 +158,7 @@ async function sendMessage(targetGroups, caption, imageBase64) {
     }
     return { status: "success", message: "Mensagens enviadas com sucesso." };
   } catch (error) {
-    log("ERROR", "Falha ao processar mensagem/mídia", { error: e.message });
+    log("ERROR", "Falha ao enviar mensagem via WhatsApp", { error: error.message });
     console.error("Erro ao enviar mensagem:", error);
     throw new Error("Falha ao enviar mensagem via WhatsApp.");
   }
