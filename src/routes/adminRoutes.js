@@ -14,4 +14,7 @@ router.post('/admin/save', adminController.saveSettings);
 // Rota para exibir a página de logs
 router.get('/admin/logs', adminController.renderLogsPage);
 
+// Rota para a caixa de entrada
+router.get('/admin/inbox', adminController.renderInboxPage);
+
 module.exports = router;

@@ -24,3 +24,11 @@ function addGroup() {
     `;
     container.appendChild(newItem);
 }
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        alert('ID do grupo copiado para a área de transferência!');
+    }, (err) => {
+        console.error('Erro ao copiar texto: ', err);
+    });
+}

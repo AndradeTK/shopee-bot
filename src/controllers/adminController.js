@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { log } = require('../services/loggerService');
+const { db } = require('../services/databaseService'); 
 
 const settingsFilePath = path.join(__dirname, '../../config/settings.json');
 const logFilePath = path.join(__dirname, '../../logs/activity.log');
@@ -59,4 +60,16 @@ function renderLogsPage(req, res) {
     }
 }
 
-module.exports = { renderAdminPage, saveSettings, renderLogsPage };
+function renderInboxPage(req, res) {
+    const query = "SELECT * FROM messages ORDER BY timestamp DESC LIMIT 50";
+    db.all(query, [], (err, rows) => {
+        if (err) {
+            console.error("Erro ao buscar mensagens:", err);
+            res.render('inbox', { messages: [] });
+            return;
+        }
+        res.render('inbox', { messages: rows });
+    });
+}
+
+module.exports = { renderAdminPage, saveSettings, renderLogsPage, renderAdminPage, renderInboxPage };

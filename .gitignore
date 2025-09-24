@@ -7,6 +7,7 @@ package-lock.json
 
 # Variáveis de ambiente
 .env
+database.db
 
 # Logs
 npm-debug.log
