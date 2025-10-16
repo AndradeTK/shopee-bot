@@ -17,4 +17,9 @@ router.get('/admin/logs', adminController.renderLogsPage);
 // Rota para a caixa de entrada
 router.get('/admin/inbox', adminController.renderInboxPage);
 
+router.get('/admin/whatsapp', adminController.renderWhatsappPage);
+
+// Rota para encerrar a sessão do WhatsApp
+router.post('/admin/whatsapp/logout', adminController.logoutWhatsapp);
+
 module.exports = router;

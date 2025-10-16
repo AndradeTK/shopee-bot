@@ -3,6 +3,11 @@ const path = require('path');
 const { log } = require('../services/loggerService');
 const { db } = require('../services/databaseService'); 
 
+
+const { logoutWhatsAppSession } = require('../services/whatsappService');
+const { getWaConnectionStatus } = require('../services/whatsappService');
+
+
 const settingsFilePath = path.join(__dirname, '../../config/settings.json');
 const logFilePath = path.join(__dirname, '../../logs/activity.log');
 
@@ -72,4 +77,19 @@ function renderInboxPage(req, res) {
     });
 }
 
-module.exports = { renderAdminPage, saveSettings, renderLogsPage, renderAdminPage, renderInboxPage };
+
+function renderWhatsappPage(req, res) {
+    const initialStatus = getWaConnectionStatus();
+    res.render('whatsapp', { initialStatus });
+}
+
+async function logoutWhatsapp(req, res) {
+    try {
+        const result = await logoutWhatsAppSession();
+        res.status(200).json(result);
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+}
+
+module.exports = { renderAdminPage, saveSettings, renderLogsPage, renderAdminPage, renderInboxPage, renderWhatsappPage, logoutWhatsapp };

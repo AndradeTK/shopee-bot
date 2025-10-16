@@ -1,64 +1,76 @@
-// No início do arquivo
 const {
   default: makeWASocket,
   useMultiFileAuthState,
   DisconnectReason,
   downloadMediaMessage,
 } = require("@whiskeysockets/baileys");
+const { exec } = require('child_process');
 const pino = require("pino");
-const qrcode = require("qrcode-terminal");
-const axios = require("axios");
-const { Boom } = require("@hapi/boom");
 const fs = require("fs");
 const path = require("path");
+const axios = require("axios");
+const { Boom } = require("@hapi/boom");
 const { log } = require("./loggerService");
 const { insertMessage } = require("./databaseService");
 
-// Guarda a instância da conexão do socket
 let sock;
+let connectionStatus = 'Iniciando...'; // Variável para rastrear o status da conexão em tempo real
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
 
-// Lê as configurações do arquivo JSON
+// Carrega as configurações do arquivo JSON
 const settingsFilePath = path.join(__dirname, "../../config/settings.json");
-const settings = JSON.parse(fs.readFileSync(settingsFilePath));
-const MONITOR_GROUP_ID = settings.monitorGroupId;
+let settings = JSON.parse(fs.readFileSync(settingsFilePath));
+let MONITOR_GROUP_ID = settings.monitorGroupId;
 
-async function connectToWhatsApp() {
+// Função para recarregar as configurações sem precisar reiniciar todo o processo
+function reloadSettings() {
+    settings = JSON.parse(fs.readFileSync(settingsFilePath));
+    MONITOR_GROUP_ID = settings.monitorGroupId;
+    console.log('Configurações de grupo recarregadas.');
+    log('INFO', 'Configurações de grupo recarregadas a partir do painel.');
+}
+
+async function connectToWhatsApp(io) {
   const { state, saveCreds } = await useMultiFileAuthState("session");
 
   sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true,
-    logger: pino({ level: "silent" }),
+    logger: pino({ level: "trace" }),
   });
 
+  // Listener para o status da conexão
   sock.ev.on("connection.update", (update) => {
     const { connection, lastDisconnect, qr } = update;
 
+    // Atualiza a variável de status e emite para o painel
     if (qr) {
-      console.log("QR Code recebido, escaneie com seu celular.");
-      qrcode.generate(qr, { small: true });
+      connectionStatus = 'Aguardando QR Code';
+      console.log("QR Code gerado. Enviando para o painel...");
+      io.emit('qr', qr);
+      io.emit('status', connectionStatus);
     }
 
     if (connection === "close") {
-      const shouldReconnect =
-        (lastDisconnect.error instanceof Boom)?.output?.statusCode !==
-        DisconnectReason.loggedOut;
-      console.log(
-        "Conexão fechada devido a ",
-        lastDisconnect.error,
-        ", reconectando...",
-        shouldReconnect
-      );
+      connectionStatus = 'Desconectado';
+      const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log("Conexão fechada, reconectando:", shouldReconnect);
+      io.emit('status', connectionStatus);
       if (shouldReconnect) {
-        connectToWhatsApp();
+        connectToWhatsApp(io);
       }
     } else if (connection === "open") {
+      connectionStatus = 'Conectado';
       console.log("Conexão com o WhatsApp aberta!");
+      io.emit('status', connectionStatus);
+      io.emit('qr', null); // Limpa o QR Code da tela
+    } else if (connection === "connecting") {
+      connectionStatus = 'Conectando...';
+      console.log("Conectando ao WhatsApp...");
+      io.emit('status', connectionStatus);
     }
   });
 
-  // Bloco de recebimento de mensagens, agora refatorado e mais limpo
+  // Listener para novas mensagens
   sock.ev.on("messages.upsert", async (m) => {
     const msg = m.messages[0];
     if (!msg.message || !msg.key.remoteJid) return;
@@ -68,19 +80,18 @@ async function connectToWhatsApp() {
     // Ignora conversas privadas, foca apenas em grupos
     if (!remoteJid.endsWith("@g.us")) return;
 
-    // Pega o conteúdo da mensagem (legenda ou texto) UMA ÚNICA VEZ
+    // Extrai o conteúdo da mensagem (legenda ou texto)
     const messageText =
       msg.message.conversation ||
       msg.message.extendedTextMessage?.text ||
       msg.message.imageMessage?.caption ||
       msg.message.videoMessage?.caption;
 
-    // Se não houver texto/legenda, não há nada a fazer.
     if (!messageText) return;
 
     console.log("Mensagem recebida de:", remoteJid);
 
-    // Salva TODAS as mensagens de grupo com texto no banco de dados para a "Caixa de Entrada"
+    // Salva a mensagem no banco de dados para a "Caixa de Entrada" do painel
     try {
       const senderName = msg.pushName || "Desconhecido";
       const metadata = await sock.groupMetadata(remoteJid);
@@ -99,7 +110,7 @@ async function connectToWhatsApp() {
       );
     }
 
-    // AGORA, verifica se a mensagem é do grupo que queremos MONITORAR para enviar ao n8n
+    // Verifica se a mensagem é do grupo de origem que deve ser processado
     if (remoteJid === MONITOR_GROUP_ID) {
       log("INFO", `Mensagem recebida do grupo monitorado ${remoteJid}`);
       let imageBase64 = null;
@@ -112,45 +123,44 @@ async function connectToWhatsApp() {
           imageBase64 = buffer.toString("base64");
           console.log("Mídia baixada com sucesso.");
         } catch (e) {
-          log("ERROR", "Falha ao baixar mídia", { error: e.message });
+          log('ERROR', 'Falha ao baixar mídia', { error: e.message });
           console.error("Erro ao baixar mídia:", e);
         }
       }
 
-      // Envia os dados coletados para o n8n
+      // Envia os dados para o n8n para processamento
       try {
         await axios.post(N8N_WEBHOOK_URL, {
-          caption: messageText, // Usa o messageText que já extraímos
-          imageBase64: imageBase64, // Será a imagem em base64 ou null
+          caption: messageText,
+          imageBase64: imageBase64,
           from: remoteJid,
         });
         console.log("Dados enviados para o n8n com sucesso!");
       } catch (error) {
-        log("ERROR", "Falha ao enviar dados para o n8n", { error: error.message });
+        log('ERROR', 'Falha ao enviar dados para o n8n', { error: error.message });
         console.error("Erro ao enviar dados para o n8n:", error.message);
       }
     }
   });
 
+  // Listener para salvar as credenciais da sessão
   sock.ev.on("creds.update", saveCreds);
 }
 
-// Função para enviar mensagens (já estava correta)
+// Função para enviar mensagens para os grupos de destino
 async function sendMessage(targetGroups, caption, imageBase64) {
-  if (!sock) {
+  if (!sock || connectionStatus !== 'Conectado') {
     throw new Error("WhatsApp não está conectado.");
   }
   try {
     for (const groupId of targetGroups) {
       if (imageBase64) {
-        // Se tiver imagem, envia imagem com legenda
         const imageBuffer = Buffer.from(imageBase64, "base64");
         await sock.sendMessage(groupId, {
           image: imageBuffer,
           caption: caption,
         });
       } else {
-        // Se não, envia só texto
         await sock.sendMessage(groupId, { text: caption });
       }
       log("INFO", `Mensagem reenviada para o grupo de destino ${groupId}`);
@@ -164,4 +174,44 @@ async function sendMessage(targetGroups, caption, imageBase64) {
   }
 }
 
-module.exports = { connectToWhatsApp, sendMessage };
+// Função para encerrar a sessão e forçar um novo QR Code
+async function logoutWhatsAppSession() {
+    console.log('Iniciando processo de logout do WhatsApp...');
+    connectionStatus = 'Desconectando...';
+    try {
+        if (sock) {
+            await sock.logout();
+            console.log('Sessão do WhatsApp encerrada.');
+        }
+        
+        const sessionPath = path.join(__dirname, '../../session');
+        if (fs.existsSync(sessionPath)) {
+            fs.rmSync(sessionPath, { recursive: true, force: true });
+        }
+        fs.mkdirSync(sessionPath);
+        console.log('Pasta de sessão limpa e recriada.');
+        
+        console.log('Reiniciando o bot via PM2...');
+        // Dá um pequeno tempo para a resposta HTTP ser enviada antes de reiniciar
+        setTimeout(() => {
+            exec('pm2 restart shopee-bot', (error) => {
+                if (error) {
+                    console.error(`Erro ao reiniciar com PM2: ${error.message}`);
+                }
+            });
+        }, 1000);
+
+        return { success: true, message: 'Bot reiniciando para gerar novo QR Code.' };
+    } catch (error) {
+        console.error('Erro durante o processo de logout:', error);
+        throw new Error('Falha ao encerrar a sessão do WhatsApp.');
+    }
+}
+
+// Função para obter o status atual da conexão para o painel
+function getWaConnectionStatus() {
+    return connectionStatus;
+}
+
+
+module.exports = { connectToWhatsApp, sendMessage, logoutWhatsAppSession, getWaConnectionStatus, reloadSettings };

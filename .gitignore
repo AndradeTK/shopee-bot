@@ -6,7 +6,7 @@ package-lock.json
 /session
 
 # Variáveis de ambiente
-.env
+
 database.db
 
 # Logs
